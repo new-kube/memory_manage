@@ -2228,13 +2228,17 @@ nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   somewhere along that path.
 
 //  在一棵树中最小的chunk(在一个最佳适配申请器的一个通用操作)能被找到，通过沿着树的最左边的叶子的路径找到他。
-    不像通常的二叉树，我们将沿着左子树指针知道我们到达一个空的，
+    不像通常的二叉树，我们将沿着左子树指针直到我们到达一个空指针，在这里，只要左子指针为null，我们就沿着右子指针，
+    直到到达两个子指针都为null的叶子。树中最小的部分将位于该路径的某个位置。
 
   The worst case number of steps to add, find, or remove a node is
   bounded by the number of bits differentiating chunks within
   bins. Under current bin calculations, this ranges from 6 up to 21
   (for 32 bit sizes) or up to 53 (for 64 bit sizes). The typical case
   is of course much better.
+
+//  最坏情况下，添加、查找或删除节点的步骤数受bins中区分块的位数的限制。
+    在当前bin计算中，范围从6到21（对于32位大小）或53（对于64位大小）。当然，典型的情况要好得多。
 */
 
 struct malloc_tree_chunk {
