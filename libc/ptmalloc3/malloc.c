@@ -2216,7 +2216,8 @@ nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 //  通过这些规则，每一个节点左子树包含了相对于右子树所有更小的尺寸。
     然而，每个子树的根节点，与子树之间没有特定顺序关系。
     (在两个子树大小之间的分割线是基于前缀关系)
-    如果我们移除最后的chunk
+    如果我们从树的内部移除给定大小的最后的chunk，我们需要去用一个叶子节点替换他。
+    树的顺序规则允许一个节点被其下面的任意一个叶子节点替换。
 
   The smallest chunk in a tree (a common operation in a best-fit
   allocator) can be found by walking a path to the leftmost leaf in
@@ -2225,6 +2226,9 @@ nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   pointer any time the left one is null, until we reach a leaf with
   both child pointers null. The smallest chunk in the tree will be
   somewhere along that path.
+
+//  在一棵树中最小的chunk(在一个最佳适配申请器的一个通用操作)能被找到，通过沿着树的最左边的叶子的路径找到他。
+    不像通常的二叉树，我们将沿着左子树指针知道我们到达一个空的，
 
   The worst case number of steps to add, find, or remove a node is
   bounded by the number of bits differentiating chunks within
