@@ -2201,7 +2201,9 @@ nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   half (0x140 <= x < 0x180) in the right subtree.  This is, of course,
   done by inspecting individual bits.
 
-  // 每棵树包含一个
+//  每棵树包含一个2的幂大小范围的chunk尺寸(最小是0x100 <= x < 0x180), 在每一个树层级上这个尺寸被分成一半，
+    chunk在更小的一半范围(0x100 <= x < 0x140 顶部鼻子？)，即左子树，更大的一半(0x140 <= x < 0x180)即右子树。
+    当然，这是通过检查特定的位做到的。
 
   Using these rules, each node's left subtree contains all smaller
   sizes than its right subtree.  However, the node at the root of each
@@ -2210,6 +2212,11 @@ nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
   If we remove the last chunk of a given size from the interior of the
   tree, we need to replace it with a leaf node.  The tree ordering
   rules permit a node to be replaced by any leaf below it.
+
+//  通过这些规则，每一个节点左子树包含了相对于右子树所有更小的尺寸。
+    然而，每个子树的根节点，与子树之间没有特定顺序关系。
+    (在两个子树大小之间的分割线是基于前缀关系)
+    如果我们移除最后的chunk
 
   The smallest chunk in a tree (a common operation in a best-fit
   allocator) can be found by walking a path to the leftmost leaf in
