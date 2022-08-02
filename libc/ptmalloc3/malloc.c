@@ -2270,6 +2270,10 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
   included in this list. They are instead independently created and
   destroyed without otherwise keeping track of them.
 
+  每一个malloc申请的空间可能包含非连续的段，保存在一个列表中，列表头被嵌入的malloc_segment结构(表现为空间的顶部)记录。
+  段也包含flags，flags保存了空间的属性。
+  那些直接通过mmap申请的大的chunk，不包含在此列表中。相反，它们是独立创建和销毁的，没有其他记录。
+
   Segment management mainly comes into play for spaces allocated by
   MMAP.  Any call to MMAP might or might not return memory that is
   adjacent to an existing segment.  MORECORE normally contiguously
@@ -2284,6 +2288,13 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
   better than this on some systems, but no general scheme seems
   to be significantly better.
 
+  段管理主要用于通过MMAP申请的空间。对MMAP的任何调用都可能返回或不返回与现有段相邻的内存。
+  MORECORE通常连续扩展当前空间，因此该空间几乎总是相邻的，处理起来更简单、更快。
+  (这就是两者都可用时，MORECORE优先于MMAP使用的原因：参考sys_alloc)。
+  当使用MMAP申请内存，我们不使用unix mmap的各种实现中支持的任何暗示机制（不一致），也不区分保留提交的内存。
+  相反，我们只是要求空间，在我们获取它时，利用其连续性。
+  这是可能可行的：在一些系统上能工作的更好，但是没有看起来明显地更好通用的方案。
+
   Management entails a simpler variant of the consolidation scheme
   used for chunks to reduce fragmentation -- new adjacent memory is
   normally prepended or appended to an existing segment. However,
@@ -2292,17 +2303,27 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
   (occurring only when getting memory from system) and that we
   don't expect to have huge numbers of segments:
 
+  管理涉及用于减少碎片chunk的加固方案的一个简单变种：新相邻内存是通常优先考虑，或者追加到已存在的段。
+  然而，与区块整合相比，有一些局限性，主要反映了这样一个事实:
+  即段处理相对较少（仅在从系统获取内存时发生），并且我们预计不会有大量的段：
+
   * Segments are not indexed, so traversal requires linear scans.  (It
     would be possible to index these, but is not worth the extra
     overhead and complexity for most programs on most platforms.)
   * New segments are only appended to old ones when holding top-most
     memory; if they cannot be prepended to others, they are held in
     different segments.
+  
+  段没有被索引，所以遍历需要线性扫描。(它可能被索引，但是在大部分平台上的大多数程序额外的开销和复杂度是不值得的。)
+  新段仅在持有最顶端内存时附加到旧段；如果它们不能预先准备给其他人，则会被分为不同的段。
 
   Except for the top-most segment of an mstate, each segment record
   is kept at the tail of its segment. Segments are added by pushing
   segment records onto the list headed by &mstate.seg for the
   containing mstate.
+
+  除mstate的最顶端段外，每个段记录都保存在其段的尾部。
+  通过将段记录推到以mstate.seg为首的列表中来添加段，包含mstate字段。
 
   Segment flags control allocation/merge/deallocation policies:
   * If EXTERN_BIT set, then we did not allocate this segment,
@@ -2315,6 +2336,12 @@ typedef struct malloc_tree_chunk* tbinptr; /* The type of bins of trees */
   * If neither bit is set, then the segment was obtained using
     MORECORE so can be merged with surrounding MORECORE'd segments
     and deallocated/trimmed using MORECORE with negative arguments.
+  // 段flags控制申请/合并/释放策略：
+    如果 EXTERN_BIT 设置， 这时我们不再申请这个段，因此不应该试着释放或同其他段合并。
+    (当前持有该位，仅是传给create_mspace_with_base的初始段)。
+    如果 IS_MMAPPED_BIT 设置，该段能被周围映射的其他段合并，并且能用munmap修正/释放。
+    如果 所有位都没设置，这时，该段用MORECORE获取的，因此能被周围MORECORE的段合并，
+    并且能用MORECORE(带着负参数)释放/修正。
 */
 
 struct malloc_segment {
@@ -2336,6 +2363,9 @@ typedef struct malloc_segment* msegmentptr;
    A malloc_state holds all of the bookkeeping for a space.
    The main fields are:
 
+   malloc_state 包含一个空间的所有记账：
+   主要字段如下：
+
   Top
     The topmost chunk of the currently active segment. Its size is
     cached in topsize.  The actual size of topmost space is
@@ -2345,12 +2375,21 @@ typedef struct malloc_segment* msegmentptr;
     cached from mparams in trim_check, except that it is disabled if
     an autotrim fails.
 
+  顶部
+    当前活动段的最顶端chunk。他的大小被缓存在topsize中。顶端空间真正的大小是：
+    topsize+TOP_FOOT_SIZE，它包含当从系统获取更多空间时保留添加的护栏和段记录(如果必要)的空间。
+    自动修正顶部的大小被缓存从mparams在trim_check，除非当自动修正失败时被禁用。
+
   Designated victim (dv)
     This is the preferred chunk for servicing small requests that
     don't have exact fits.  It is normally the chunk split off most
     recently to service another small request.  Its size is cached in
     dvsize. The link fields of this chunk are not maintained since it
     is not kept in a bin.
+
+  指定受害者(dv)
+    这是为没有精确匹配的小请求提供服务的首选块。它通常是最近分离的区块，用于服务另一个小请求。
+    他的大小被缓存在dvsize。chunk的链接域不再维持，因为它没有保存在bin中。
 
   SmallBins
     An array of bin headers for free chunks.  These bins hold chunks
@@ -2362,11 +2401,23 @@ typedef struct malloc_segment* msegmentptr;
     waste, we allocate only the fd/bk pointers of bins, and then use
     repositioning tricks to treat these as the fields of a chunk.
 
+  小bins
+    空闲chunk的bin头数组。这些bin包含chunk(大小小于MIN_LARGE_SIZE字节)。
+    每一个bin包含相同大小的chunk，间隔8字节。为了简化使用 采用双链表，
+    每个bin头充当指向真实的第一个节点的malloc_chunk，如果它存在(否则指向他自己)。
+    对于头来说，这可以避免特定情况。但是为了避免浪费，我们仅申请了bin的fd/bk指针，
+    这时用重定位的技巧去把它们作为chunk的字段。
+
   TreeBins
     Treebins are pointers to the roots of trees holding a range of
     sizes. There are 2 equally spaced treebins for each power of two
     from TREE_SHIFT to TREE_SHIFT+16. The last bin holds anything
     larger.
+
+  树bins
+    树bins是指向树根的指针(持有大小的范围)。
+    从 TREE_SHIFT 到 TREE_SHIFT + 16，每2次幂，都有2个相同空间树bin。
+    最后一个bin可以持有更大的空间。
 
   Bin maps
     There is one bit map for small bins ("smallmap") and one for
@@ -2381,69 +2432,101 @@ typedef struct malloc_segment* msegmentptr;
     intended to reduce the branchiness of paths through malloc etc, as
     well as to reduce the number of memory locations read or written.
 
+  bin map
+    有一个位图用于小bin，另一个用于树bin。当非空时，每个bin设置他的位，当空时，清除该位。
+    然后使用位操作避免逐一bin查找：几乎所有的“搜索”都是在不查看不会被选中的bin的情况下完成的。
+    位图保守地使用每个映射字32位，即使在64位系统上也是如此。
+    为了更好地描述此处使用的一些基于位的技术，参考Henry S. Warren Jr的书： "Hacker's Delight" (补充： http://hackersdelight.org/)
+    其中许多旨在减少通过malloc等路径的分支, 以及减少读取或写入的内存位置的数量。
+
   Segments
     A list of segments headed by an embedded malloc_segment record
     representing the initial space.
+
+  段
+    由代表初始空间的嵌入式malloc_segment记录开头的段列表
 
   Address check support
     The least_addr field is the least address ever obtained from
     MORECORE or MMAP. Attempted frees and reallocs of any address less
     than this are trapped (unless INSECURE is defined).
 
+  地址检测支持
+    least_addr域是最小地址：从MORECORE或者MMAP获取的地址。
+    尝试小于它的任何地址的释放或重新malloc将是受限的。(除非定义了 INSECURE )
+
   Magic tag
     A cross-check field that should always hold same value as mparams.magic.
+
+  魔术tag
+    一个交叉检查域：应该一直保存和mparams.magic相同的值。
 
   Flags
     Bits recording whether to use MMAP, locks, or contiguous MORECORE
 
+  flags
+    位：记录了是否使用MMAP，锁，或者连续MORECORE
+
   Statistics
     Each space keeps track of current and maximum system memory
     obtained via MORECORE or MMAP.
+
+  统计
+    每个空间保存了当前的足迹和最大系统内存(通过MORECORE或者MMAP获取的)
 
   Trim support
     Fields holding the amount of unused topmost memory that should trigger
     timming, and a counter to force periodic scanning to release unused
     non-topmost segments.
 
+  修正支持
+    字段持有了大连未使用的最顶部内存：应该触发定时并计数：强制间隔扫描去释放未使用的非顶部的段。
+
   Locking
     If USE_LOCKS is defined, the "mutex" lock is acquired and released
     around every public call using this mspace.
 
+  锁定
+    如果 USE_LOCKS 定义了，使用此mspace，围绕每次公共调用前后，互斥锁需要获取和释放。
+
   Extension support
     A void* pointer and a size_t field that can be used to help implement
     extensions to this malloc.
+
+  扩展支持
+    一个void*指针，和一个size_t域 能被用于帮助实现扩展malloc。
 */
 
 /* Bin types, widths and sizes */
-#define NSMALLBINS        (32U)
-#define NTREEBINS         (32U)
-#define SMALLBIN_SHIFT    (3U)
-#define SMALLBIN_WIDTH    (SIZE_T_ONE << SMALLBIN_SHIFT)
-#define TREEBIN_SHIFT     (8U)
-#define MIN_LARGE_SIZE    (SIZE_T_ONE << TREEBIN_SHIFT)
-#define MAX_SMALL_SIZE    (MIN_LARGE_SIZE - SIZE_T_ONE)
-#define MAX_SMALL_REQUEST (MAX_SMALL_SIZE - CHUNK_ALIGN_MASK - CHUNK_OVERHEAD)
+#define NSMALLBINS        (32U)   // SmallBin的数量
+#define NTREEBINS         (32U)   // TreeBin的数量
+#define SMALLBIN_SHIFT    (3U)    // SmallBin的shift
+#define SMALLBIN_WIDTH    (SIZE_T_ONE << SMALLBIN_SHIFT)  // SmallBin宽度: 8
+#define TREEBIN_SHIFT     (8U)    // TreeBin的shift
+#define MIN_LARGE_SIZE    (SIZE_T_ONE << TREEBIN_SHIFT)   // TreeBin的宽度：256
+#define MAX_SMALL_SIZE    (MIN_LARGE_SIZE - SIZE_T_ONE)   // 最大small大小:
+#define MAX_SMALL_REQUEST (MAX_SMALL_SIZE - CHUNK_ALIGN_MASK - CHUNK_OVERHEAD)  // 最大small请求
 
 struct malloc_state {
-  binmap_t   smallmap;
-  binmap_t   treemap;
-  size_t     dvsize;
-  size_t     topsize;
-  char*      least_addr;
-  mchunkptr  dv;
+  binmap_t   smallmap;  // smallbin位图
+  binmap_t   treemap;   // treebin位图
+  size_t     dvsize;    // 
+  size_t     topsize;   // 
+  char*      least_addr;  // 用于最小内存地址，安全检查。
+  mchunkptr  dv;        // 
   mchunkptr  top;
   size_t     trim_check;
   size_t     release_checks;
   size_t     magic;
-  mchunkptr  smallbins[(NSMALLBINS+1)*2];
-  tbinptr    treebins[NTREEBINS];
+  mchunkptr  smallbins[(NSMALLBINS+1)*2]; // smallbin malloc_chunk类型
+  tbinptr    treebins[NTREEBINS];         // treebin malloc_tree_chunk类型
   size_t     footprint;
   size_t     max_footprint;
   flag_t     mflags;
 #if USE_LOCKS
   MLOCK_T    mutex;     /* locate lock among fields that rarely change */
 #endif /* USE_LOCKS */
-  msegment   seg;
+  msegment   seg;   // segment: malloc_segment类型
   void*      extp;      /* Unused but available for extensions */
   size_t     exts;
 };
@@ -2456,6 +2539,9 @@ typedef struct malloc_state*    mstate;
   malloc_params holds global properties, including those that can be
   dynamically set using mallopt. There is a single instance, mparams,
   initialized in init_mparams.
+
+  malloc_params保存了全局的属性，包含哪些，能够通过mallopt动态设置的属性。
+  这是一个单实例，mparams 通过init_mparams初始化。
 */
 
 struct malloc_params {
