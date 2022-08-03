@@ -2586,11 +2586,11 @@ static struct malloc_state _gm_;
   ((M)->mflags | USE_LOCK_BIT) :\
   ((M)->mflags & ~USE_LOCK_BIT))
 
-/* page-align a size */
+/* page-align a size */ // 页对齐
 #define page_align(S)\
  (((S) + (mparams.page_size - SIZE_T_ONE)) & ~(mparams.page_size - SIZE_T_ONE))
 
-/* granularity-align a size */
+/* granularity-align a size */ // 粒度对齐(更细粒度)
 #define granularity_align(S)\
   (((S) + (mparams.granularity - SIZE_T_ONE))\
    & ~(mparams.granularity - SIZE_T_ONE))
@@ -2608,14 +2608,14 @@ static struct malloc_state _gm_;
 #define is_granularity_aligned(S)\
    (((size_t)(S) & (mparams.granularity - SIZE_T_ONE)) == 0)
 
-/*  True if segment S holds address A */
-#define segment_holds(S, A)\
+/*  True if segment S holds address A */ // 地址是否持有，base <= A < base+size
+#define segment_holds(S, A)\  
   ((char*)(A) >= S->base && (char*)(A) < S->base + S->size)
 
 /* Return segment holding given address */
 static msegmentptr segment_holding(mstate m, char* addr) {
   msegmentptr sp = &m->seg;
-  for (;;) {
+  for (;;) { //循环遍历所有的segment，直到查出addr在seg中为止，否则返回空。
     if (addr >= sp->base && addr < sp->base + sp->size)
       return sp;
     if ((sp = sp->next) == 0)
@@ -2644,6 +2644,9 @@ static int has_segment_link(mstate m, msegmentptr ss) {
   TOP_FOOT_SIZE is padding at the end of a segment, including space
   that may be needed to place segment records and fenceposts when new
   noncontiguous segments are added.
+
+  TOP_FOOT_SIZE 是段的尾部的填充，包括添加新的非连续段时放置段记录和围栏柱所需的空间。
+
 */
 #define TOP_FOOT_SIZE\
   (align_offset(chunk2mem(0))+pad_request(sizeof(struct malloc_segment))+MIN_CHUNK_SIZE)
@@ -2655,6 +2658,8 @@ static int has_segment_link(mstate m, msegmentptr ss) {
   PREACTION should be defined to return 0 on success, and nonzero on
   failure. If you are not using locking, you can redefine these to do
   anything you like.
+
+  PREACTION 应该被定义，当成功的时候返回0，失败非0。如果你不用锁，你能重定义这些去做你想做的任何事情。
 */
 
 #if USE_LOCKS
@@ -2682,6 +2687,11 @@ static int has_segment_link(mstate m, msegmentptr ss) {
   reallocs. The argument p is an address that might have triggered the
   fault. It is ignored by the two predefined actions, but might be
   useful in custom actions that try to help diagnose errors.
+
+  检测到错误地址时触发 CORRUPTION_ERROR_ACTION
+  在检测到错误释放和realloc时触发 USAGE_ERROR_ACTION
+  参数p是可能触发故障的地址。在两个预定义行为时被忽略，但是在自定义行为(尝试帮助诊断错误)时是有用的。
+
 */
 
 #if PROCEED_ON_ERROR
@@ -2751,7 +2761,7 @@ static size_t traverse_and_check(mstate m);
 #define smallbin_at(M, i)   ((sbinptr)((char*)&((M)->smallbins[(i)<<1])))
 #define treebin_at(M,i)     (&((M)->treebins[i]))
 
-/* assign tree index for size S to variable I */
+/* assign tree index for size S to variable I */ //? 这部分代码没搞懂啥意思。函数名，计算树索引。gnuc采用内联汇编。
 #if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
 #define compute_tree_index(S, I)\
 {\
