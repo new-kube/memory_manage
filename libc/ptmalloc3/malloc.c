@@ -678,6 +678,7 @@ MAX_RELEASE_CHECK_RATE   default: 255 unless not HAVE_MMAP
 #include "/usr/include/malloc.h"
 #else /* HAVE_USR_INCLUDE_MALLOC_H */
 
+// malloc 用于使用属性和统计
 struct mallinfo {
   MALLINFO_FIELD_TYPE arena;    /* non-mmapped space allocated from system */
   MALLINFO_FIELD_TYPE ordblks;  /* number of free chunks */
@@ -2887,6 +2888,7 @@ static size_t traverse_and_check(mstate m);
 
 
 /* ----------------------- Runtime Check Support ------------------------- */
+/* ----------------------- 运行时检测支持 ------------------------- */
 
 /*
   For security, the main invariant is that malloc/free/etc never
@@ -2897,6 +2899,12 @@ static size_t traverse_and_check(mstate m);
   check all of those linked or offsetted from other embedded data
   structures.  These checks are interspersed with main code in a way
   that tends to minimize their run-time cost.
+
+  为了安全起见，malloc/free/等等从不写入malloc_state以外的静态地址, 
+  除非静态malloc_state本身已损坏，这无法通过malloc调用产生(因为这些检查)。
+  从本质上讲，这意味着我们相信保存在malloc_state中的所有指针，大小，映射等等，
+  但是检查所有从其他嵌入的连接或偏移的数据结构。这些检查散步在主要的代码段，
+  以一种方式：趋向于最小运行时开销。
 
   When FOOTERS is defined, in addition to range checking, we also
   verify footer fields of inuse chunks, which can be used guarantee
@@ -2912,8 +2920,19 @@ static size_t traverse_and_check(mstate m);
   security through some other means.  Unlike Robertson et al, we
   always dynamically check addresses of all offset chunks (previous,
   next, etc). This turns out to be cheaper than relying on hashes.
+
+  当FOOTERS被定义，除了范围检查，我们也验证未使用的chunk的footer域：
+  能被用于保证控制malloc/free的mstate是完整的。
+  这是William Robertson描述的方法的流水线版本。(?简化版本)。
+  未使用chunk的footer，保存了他的mstate的xor和一个随机种子，在调用free和realloc时对齐进行检查。
+  这（可能）对程序外部是不可用的，但任何代码都可以成功地对任何块(malloc申请的)计算，
+  因此它本身不会对已经通过其他方式破坏安全性的代码提供保护。
+  不像Robertson et al，我们通常动态检查所有chunk偏移的地址(上一个、下一个、等等)。
+  事实证明，这比依赖哈希更便宜.
+
 */
 
+// 如下是安全检测。
 #if !INSECURE
 /* Check if address a is at least as high as any from MORECORE or MMAP */
 #define ok_address(M, a) ((char*)(a) >= (M)->least_addr)
@@ -2998,22 +3017,23 @@ static size_t traverse_and_check(mstate m);
 
 /* ---------------------------- setting mparams -------------------------- */
 
-/* Initialize mparams */
+/* Initialize mparams */ // mparams可以用mallopt函数设置参数。
 static int init_mparams(void) {
   if (mparams.page_size == 0) {
     size_t s;
 
-    mparams.mmap_threshold = DEFAULT_MMAP_THRESHOLD;
-    mparams.trim_threshold = DEFAULT_TRIM_THRESHOLD;
+    mparams.mmap_threshold = DEFAULT_MMAP_THRESHOLD;  // mmap的阈值，默认为256K
+    mparams.trim_threshold = DEFAULT_TRIM_THRESHOLD;  // trim的阈值，默认为2M
 #if MORECORE_CONTIGUOUS
-    mparams.default_mflags = USE_LOCK_BIT|USE_MMAP_BIT;
+    mparams.default_mflags = USE_LOCK_BIT|USE_MMAP_BIT; // 默认 mflags: 设置 LOCK/MMAP 位。
 #else  /* MORECORE_CONTIGUOUS */
     mparams.default_mflags = USE_LOCK_BIT|USE_MMAP_BIT|USE_NONCONTIGUOUS_BIT;
 #endif /* MORECORE_CONTIGUOUS */
 
+// 获取magic，不同的宏设置，获取的magic不同。
 #if (FOOTERS && !INSECURE)
     {
-#if USE_DEV_RANDOM
+#if USE_DEV_RANDOM  // 使用/dev/urandom获取随机数。
       int fd;
       unsigned char buf[sizeof(size_t)];
       /* Try to use /dev/urandom, else fall back on using time */
@@ -3045,7 +3065,7 @@ static int init_mparams(void) {
     RELEASE_MAGIC_INIT_LOCK();
 
 #ifndef WIN32
-    mparams.page_size = malloc_getpagesize;
+    mparams.page_size = malloc_getpagesize; // 通过系统调用sysconf获取页面大小。
     mparams.granularity = ((DEFAULT_GRANULARITY != 0)?
                            DEFAULT_GRANULARITY : mparams.page_size);
 #else /* WIN32 */
@@ -3057,11 +3077,11 @@ static int init_mparams(void) {
     }
 #endif /* WIN32 */
 
-    /* Sanity-check configuration:
-       size_t must be unsigned and as wide as pointer type.
-       ints must be at least 4 bytes.
-       alignment must be at least 8.
-       Alignment, min chunk size, and page size must all be powers of 2.
+    /* Sanity-check configuration: 健康检测配置:
+       size_t must be unsigned and as wide as pointer type. // size_t必须是无符号的，并且和指针有相同的宽度。
+       ints must be at least 4 bytes. // 整型必须至少4字节。
+       alignment must be at least 8.  // 对齐必须至少8.
+       Alignment, min chunk size, and page size must all be powers of 2. // 对齐，最小chunk大小和页面大小必须都是2的幂。
     */
     if ((sizeof(size_t) != sizeof(char*)) ||
         (MAX_SIZE_T < MIN_CHUNK_SIZE)  ||
@@ -3370,7 +3390,7 @@ static void do_check_malloc_state(mstate m) {
 /* ----------------------------- statistics ------------------------------ */
 
 #if !NO_MALLINFO
-static struct mallinfo internal_mallinfo(mstate m) {
+static struct mallinfo internal_mallinfo(mstate m) { // 统计信息。
   struct mallinfo nm = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
   if (!PREACTION(m)) {
     check_malloc_state(m);
@@ -3409,6 +3429,7 @@ static struct mallinfo internal_mallinfo(mstate m) {
 }
 #endif /* !NO_MALLINFO */
 
+// 获取malloc的统计信息，主要是段(segment)部分，max_footprint/footprint/used信息。
 static void internal_malloc_stats(mstate m) {
   if (!PREACTION(m)) {
     size_t maxfp = 0;
@@ -3450,7 +3471,10 @@ static void internal_malloc_stats(mstate m) {
   compilers.
 */
 
-/* Link a free chunk into a smallbin  */
+/* Link a free chunk into a smallbin  */ 
+// M -> malloc_state指针
+// P -> malloc_chunk指针，待插入的节点。可以理解为空闲节点的插入。因为存在fd/bk指针。
+// S -> P指向chunk的size。
 #define insert_small_chunk(M, P, S) {\
   bindex_t I  = small_index(S);\
   mchunkptr B = smallbin_at(M, I);\
@@ -3470,6 +3494,7 @@ static void internal_malloc_stats(mstate m) {
 }
 
 /* Unlink a chunk from a smallbin  */
+// 把P所指向的chunk从列表中移除。
 #define unlink_small_chunk(M, P, S) {\
   mchunkptr F = P->fd;\
   mchunkptr B = P->bk;\
