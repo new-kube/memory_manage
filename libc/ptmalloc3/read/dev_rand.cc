@@ -21,7 +21,7 @@ int main() {
     close(fd);
 
     size_t rd = *((size_t *)buf);
-    printf("random: %d, %x\n", rd, rd);
+    printf("random: %lu, %lx\n", rd, rd);
 
     return 0;
 }

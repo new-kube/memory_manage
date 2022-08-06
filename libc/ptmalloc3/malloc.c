@@ -519,7 +519,7 @@ MAX_RELEASE_CHECK_RATE   default: 255 unless not HAVE_MMAP
 #endif  /* LACKS_SYS_TYPES_H */
 
 /* The maximum possible size_t value has all bits set */
-#define MAX_SIZE_T           (~(size_t)0)
+#define MAX_SIZE_T           (~(size_t)0)   // -1
 
 #ifndef ONLY_MSPACES
 #define ONLY_MSPACES 0
@@ -3969,7 +3969,7 @@ static void* sys_alloc(mstate m, size_t nb) {
     ACQUIRE_MORECORE_LOCK();
 
     if (ss == 0) {  /* First time through or recovery */
-      char* base = (char*)CALL_MORECORE(0);
+      char* base = (char*)CALL_MORECORE(0); // 调用 morecore-> sbrk(); 返回堆的开始位置sbrk(0);
       if (base != CMFAIL) {
         asize = granularity_align(nb + TOP_FOOT_SIZE + SIZE_T_ONE);
         /* Adjust to end on a page boundary */
